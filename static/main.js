@@ -2,7 +2,16 @@
 
 var OSGC = window.OSGC = {};
 var params = window.params = {};
-var activeTag = window.activeTag = null;
+
+/**
+ * @type {string[]}
+ */
+var activeTags = window.activeTags = [];
+
+/**
+ * @type {Object<string, string[]}
+ */
+var typedTags = window.typedTags = {};
 
 // Lazy load badges when they become visible (avoid error 429)
 function lazyloadHandler(e) {
@@ -113,7 +122,7 @@ function filter(filter_value) {
 })();
 
 // tag handling
-function filterByTag(curTag) {
+function filterByTags() {
   var games = document.getElementsByTagName('dd');
   var game, gameTags;
   var parent;
@@ -123,17 +132,50 @@ function filterByTag(curTag) {
     gameTags = game.getAttribute('data-tags').split(' ');
     parent = document.getElementById(game.getAttribute('data-parent'));
 
-    if (gameTags && gameTags.indexOf(curTag) > -1) {
-      if (!game.classList.contains('active')) {
-        game.classList.add('active');
-        parent.classList.add('active');
-      }
-    } else if (game.classList.contains('active')) {
-      game.classList.remove('active');
-      parent.classList.remove('active');
-    }
+    var shouldBeActive = allActiveTagsInGameTags(gameTags);
+    game.classList.toggle('active', shouldBeActive);
+    parent.classList.toggle('active', shouldBeActive);
   }
   handleContentChanged();
+}
+
+/**
+ * Checks if tags for a single game contain a matching set of the
+ * current active tags.
+ * @param {string[]} gameTags An array of tags for a single game
+ * @returns {boolean}
+ */
+function allActiveTagsInGameTags(gameTags) {
+  if (!gameTags) return false;
+
+  var activeTypes = {};
+  for (var i = 0; i < activeTags.length; i++) {
+    var type = getTypeOfTag(activeTags[i]);
+    if (!activeTypes[type]) activeTypes[type] = false
+    if (gameTags.indexOf(activeTags[i]) > -1) {
+      activeTypes[type] = true
+    };
+  }
+
+  var noTagsMissing = true;
+  var typeMatchesFound = Object.values(activeTypes);
+  for (var i = 0; i < typeMatchesFound.length; i++) {
+    if (!typeMatchesFound[i]) noTagsMissing = false;
+  }
+
+  return noTagsMissing;
+}
+
+/**
+ * Get type of tag
+ * @param {string} tag name of tag
+ * @returns {string | null} type of tag
+ */
+function getTypeOfTag(tag) {
+  var tagTypes = Object.keys(typedTags);
+  for (var i = 0; i < tagTypes.length; i++) {
+    if (typedTags[tagTypes[i]].indexOf(tag) > -1) return tagTypes[i]
+  }
 }
 
 function sortByUpdated(e) {
@@ -171,16 +213,17 @@ function sortByUpdated(e) {
   }
 }
 
-function highlightTags(tag) {
+function highlightTags(tags) {
   var style = document.getElementById('tag-style');
-  if (tag) {
-    tag = tag.replace(/"/g, '');
-    var line = '.tag[data-name=\"' + tag + '\"] { color: #ccc; background-color: #444; }';
-    line += '.darkTheme .tag[data-name=\"' + tag + '\"] { color: #444; background-color: #ccc; }';
-    style.innerHTML = line;
-  } else {
-    style.innerHTML = '';
+  var line = ''
+  if (tags) {
+    for (var i = 0; i < tags.length; i++) {
+      var tag = tags[i].replace(/"/g, '');
+      line += '.darkTheme .tag[data-name=\"' + tag + '\"] { color: #444; background-color: #ccc; }';
+      line += '.darkTheme .tag[data-name=\"' + tag + '\"] { color: #444; background-color: #ccc; }';
+    }
   }
+  style.innerHTML = line;
 }
 
 (function() {
@@ -193,22 +236,41 @@ function highlightTags(tag) {
   function onclick(e) {
     var t = e.target.hasAttribute('data-name') ? e.target : e.target.parentNode;
     var curTag = t.getAttribute('data-name');
+    var game = t.parentNode.parentNode;
+    var newActiveTags = [];
 
-    if (curTag === activeTag) {
-      activeTag = null;
+    for (var i = 0; i < activeTags.length; i++) {
+      if (activeTags[i] !== curTag) {
+        newActiveTags.push(activeTags[i]);
+      };
+    };
+
+    activeTags = newActiveTags;
+    if (!game.classList.contains('active')) activeTags.push(curTag);
+
+    if (activeTags.length === 0) {
       document.body.classList.remove('tags-active');
       highlightTags(null);
       setQueryParams('tag', null);
     } else {
-      activeTag = curTag;
       document.body.classList.add('tags-active');
-      highlightTags(curTag);
-      setQueryParams('tag', curTag);
+      highlightTags(activeTags);
+      setQueryParams('tag', activeTags.join('~'));
     }
     
-    filterByTag(curTag);
+    filterByTags();
   }
 })();
+
+/**
+ * Gets the type/category of a tag element
+ * @param {HTMLElement} elm The tag element to extract info from
+ * @returns {string | null} A tag type, if present
+ */
+function getElmTagType(elm) {
+  var tagTitle = elm.getAttribute('title');
+  return tagTitle == null ? tagTitle : tagTitle.toLowerCase();
+}
 
 // image validation
 (function() {
@@ -400,16 +462,30 @@ function setCount() {
   document.getElementsByClassName('nav-count')[0].innerHTML = (total - hidden) + "/" + total + count;
 }
 
+function buildTypedTags() {
+  var allTags = Array.from(document.querySelectorAll('.tag-groups .tag'))
+
+  for (var i = 0; i < allTags.length; i++) {
+    var type = getElmTagType(allTags[i]);
+    var tag = allTags[i].innerText.toLowerCase();
+    if (!typedTags.hasOwnProperty(type)) typedTags[type] = [];
+    if (!(typedTags[type].indexOf(tag) > -1)) typedTags[type].push(tag);
+  };
+
+  console.dir(typedTags)
+}
+
 (function () {
+  buildTypedTags();
   setCount();
   params = getQueryParams();
   if (params.hasOwnProperty('tag')) {
-    activeTag = params['tag'];
+    activeTags = params['tag'].split('~');
     document.body.classList.add('tags-active');
-    highlightTags(params['tag']);
+    highlightTags(activeTags);
     setQueryParams('tag', params['tag']);
     
-    filterByTag(params['tag']);
+    filterByTags();
   }
   
   if (params.hasOwnProperty('filter')) {
